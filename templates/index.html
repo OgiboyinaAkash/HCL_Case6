@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrismRoute — Cost-Aware Model Router & Semantic Cache</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f293d;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --cyan: #06b6d4;
+      --purple: #8b5cf6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    .logo-badge {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    button {
+      cursor: pointer;
+      font-family: inherit;
+      border: none;
+      transition: all 0.15s ease;
+    }
+    .btn-secondary {
+      background: #1f2937;
+      color: var(--text-muted);
+      border: 1px solid var(--card-border);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .btn-secondary:hover {
+      background: #374151;
+      color: var(--text-main);
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Live Telemetry Bar */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .metric-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .metric-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .metric-sub {
+      font-size: 0.8rem;
+      color: var(--success);
+      font-weight: 500;
+    }
+
+    /* Main Query Card */
+    .query-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 16px;
+      border-radius: 10px;
+      background: #0d131f;
+      border: 1px solid #2d3748;
+      color: var(--text-main);
+      font-size: 1rem;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+      transition: border 0.2s;
+    }
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    }
+    .input-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .scope-select {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .scope-select input {
+      background: #0d131f;
+      border: 1px solid #2d3748;
+      color: var(--text-main);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      width: 120px;
+    }
+
+    /* Preset Quick Chips */
+    .presets-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .preset-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .preset-chip {
+      background: #1e293b;
+      border: 1px solid #334155;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .preset-chip:hover {
+      background: #334155;
+      color: white;
+      border-color: #64748b;
+    }
+
+    /* Result Section */
+    .result-section {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .result-section.active {
+      display: flex;
+    }
+
+    /* Path & Tier Banner */
+    .banner-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .banner-item {
+      background: #161f30;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .banner-item-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      width: fit-content;
+    }
+    .badge-exact { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; }
+    .badge-semantic { background: rgba(6, 182, 212, 0.15); color: #06b6d4; border: 1px solid #06b6d4; }
+    .badge-hint { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid #f59e0b; }
+    .badge-nn { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid #8b5cf6; }
+
+    .tier-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      width: fit-content;
+    }
+    .tier-small { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .tier-medium { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+    .tier-large { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
+
+    /* Output Card */
+    .answer-card {
+      background: #0d131f;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .answer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 8px;
+    }
+    .answer-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .answer-text {
+      font-size: 1.05rem;
+      line-height: 1.6;
+      color: #f1f5f9;
+      white-space: pre-wrap;
+    }
+
+    /* Decision Trace Breakdown */
+    .trace-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .trace-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .trace-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .trace-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px;
+      background: #0d131f;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+    }
+    .trace-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .trace-val {
+      font-size: 0.9rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: #e2e8f0;
+      word-break: break-all;
+    }
+
+    /* Architecture Flow Highlight */
+    .flow-steps {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      padding: 12px;
+      background: #0d131f;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+    }
+    .step-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: #1e293b;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .step-pill.active {
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .step-arrow {
+      color: #475569;
+      font-size: 0.8rem;
+    }
+
+    .loader {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .loader.active {
+      display: flex;
+    }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #374151;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <span>PrismRoute</span>
+      <span class="logo-badge">Case 6</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn-secondary" onclick="fetchMetrics()">Refresh Metrics</button>
+      <button class="btn-secondary" onclick="clearCache()">Clear Cache</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Live Metrics Strip -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <span class="metric-title">Total Processed</span>
+        <span class="metric-value" id="stat-total">0</span>
+        <span class="metric-sub" id="stat-queries-sub">Live queries</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Total Cost Saved</span>
+        <span class="metric-value" id="stat-saved">$0.000000</span>
+        <span class="metric-sub" id="stat-saved-pct">0.0% savings</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Cache Hit Rate</span>
+        <span class="metric-value" id="stat-hit-rate">0.0%</span>
+        <span class="metric-sub" id="stat-hits-sub">Exact + Semantic</span>
+      </div>
+      <div class="metric-card">
+        <span class="metric-title">Avg Latency</span>
+        <span class="metric-value" id="stat-latency">0 ms</span>
+        <span class="metric-sub">End-to-end</span>
+      </div>
+    </section>
+
+    <!-- Query Input Area -->
+    <section class="query-card">
+      <div class="input-wrapper">
+        <textarea id="query-input" placeholder="Type any query here (e.g. 'What is 15 percent of 500?', math question, coding task, or reasoning problem)..."></textarea>
+      </div>
+
+      <!-- Presets -->
+      <div class="presets-container">
+        <span class="preset-label">Quick Presets:</span>
+        <button class="preset-chip" onclick="setQuery('What is 15 percent of 200?')">15% of 200 (Math)</button>
+        <button class="preset-chip" onclick="setQuery('Can you calculate 15 percent of 200?')">Paraphrase (Semantic Hit)</button>
+        <button class="preset-chip" onclick="setQuery('What is 15 percent of 300?')">Number Trap (Safe Guard)</button>
+        <button class="preset-chip" onclick="setQuery('What percentage is 15 out of 200 total items?')">Hint Zone (Tier Reuse)</button>
+        <button class="preset-chip" onclick="setQuery('Solve the recurrence relation T(n) = 2T(n/2) + n log n with complexity proof.')">Complex STEM (Large Tier)</button>
+        <button class="preset-chip" onclick="setQuery('Write an optimal Dijkstra algorithm in Python with PriorityQueue.')">Coding Algorithm</button>
+      </div>
+
+      <div class="input-controls">
+        <div class="scope-select">
+          <label for="scope-input">Scope ID:</label>
+          <input type="text" id="scope-input" value="default">
+        </div>
+        <div style="display: flex; align-items: center; gap: 14px;">
+          <div class="loader" id="loader">
+            <div class="spinner"></div>
+            <span>Routing query...</span>
+          </div>
+          <button class="btn-primary" id="submit-btn" onclick="submitQuery()">
+            <span>Execute Query</span>
+            <span>&rarr;</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Results Section -->
+    <section class="result-section" id="result-section">
+      <!-- High-level Decision Cards -->
+      <div class="banner-grid">
+        <div class="banner-item">
+          <span class="banner-item-label">Architecture Path Taken</span>
+          <div id="path-badge" class="badge badge-exact">EXACT_HASH_HIT</div>
+        </div>
+        <div class="banner-item">
+          <span class="banner-item-label">Selected Model Tier</span>
+          <div id="tier-badge" class="tier-badge tier-small">SMALL</div>
+        </div>
+        <div class="banner-item">
+          <span class="banner-item-label">Actual Cost Incurred</span>
+          <div style="font-size: 1.25rem; font-weight: 700; color: #10b981;" id="actual-cost">$0.000000</div>
+          <span style="font-size: 0.75rem; color: var(--text-muted);" id="saved-pct">100% saved vs Large model</span>
+        </div>
+        <div class="banner-item">
+          <span class="banner-item-label">Latency</span>
+          <div style="font-size: 1.25rem; font-weight: 700;" id="latency-val">0.0 ms</div>
+          <span style="font-size: 0.75rem; color: var(--text-muted);" id="cache-status-val">Cache Status: HIT_EXACT</span>
+        </div>
+      </div>
+
+      <!-- Generated Answer -->
+      <div class="answer-card">
+        <div class="answer-header">
+          <span class="answer-title">Model Solution / Response</span>
+        </div>
+        <div class="answer-text" id="answer-text">Answer will appear here...</div>
+      </div>
+
+      <!-- Architecture Decision Trace -->
+      <div class="trace-card">
+        <div class="trace-title">
+          <span>Architecture Decision Record & Trace</span>
+        </div>
+
+        <div class="flow-steps" id="flow-steps">
+          <span class="step-pill" id="step-hash">1. Normalize & Hash</span>
+          <span class="step-arrow">&rarr;</span>
+          <span class="step-pill" id="step-exact">2. Exact Match (Memory)</span>
+          <span class="step-arrow">&rarr;</span>
+          <span class="step-pill" id="step-embed">3. Embed & Cosine Search</span>
+          <span class="step-arrow">&rarr;</span>
+          <span class="step-pill" id="step-tier">4. Model Tier Selection</span>
+          <span class="step-arrow">&rarr;</span>
+          <span class="step-pill" id="step-call">5. Call Model & Guard</span>
+          <span class="step-arrow">&rarr;</span>
+          <span class="step-pill" id="step-cache">6. Write Cache & Log</span>
+        </div>
+
+        <div class="trace-grid" style="margin-top: 16px;">
+          <div class="trace-row">
+            <span class="trace-label">Cosine Similarity</span>
+            <span class="trace-val" id="trace-similarity">1.0000</span>
+          </div>
+          <div class="trace-row">
+            <span class="trace-label">Skipped Feature Layer</span>
+            <span class="trace-val" id="trace-skipped">True</span>
+          </div>
+          <div class="trace-row">
+            <span class="trace-label">Routing / Cache Reason</span>
+            <span class="trace-val" id="trace-reason">Exact match</span>
+          </div>
+          <div class="trace-row">
+            <span class="trace-label">Baseline Large Cost</span>
+            <span class="trace-val" id="trace-baseline">$0.000000</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function setQuery(text) {
+      document.getElementById('query-input').value = text;
+      submitQuery();
+    }
+
+    async function fetchMetrics() {
+      try {
+        const res = await fetch('/api/metrics');
+        const data = await res.json();
+        document.getElementById('stat-total').innerText = data.total_queries;
+        document.getElementById('stat-saved').innerText = '$' + data.total_saved.toFixed(6);
+        document.getElementById('stat-saved-pct').innerText = data.savings_pct.toFixed(1) + '% savings';
+        document.getElementById('stat-hit-rate').innerText = data.cache_hit_rate.toFixed(1) + '%';
+        document.getElementById('stat-latency').innerText = data.avg_latency.toFixed(1) + ' ms';
+      } catch (err) {
+        console.error("Failed to fetch metrics", err);
+      }
+    }
+
+    async function clearCache() {
+      if (!confirm("Are you sure you want to clear the semantic cache?")) return;
+      try {
+        await fetch('/api/clear', { method: 'POST' });
+        alert("Cache cleared successfully!");
+        fetchMetrics();
+      } catch (err) {
+        alert("Error clearing cache: " + err);
+      }
+    }
+
+    async function submitQuery() {
+      const query = document.getElementById('query-input').value.trim();
+      const scope = document.getElementById('scope-input').value.trim() || 'default';
+      if (!query) {
+        alert("Please enter a query.");
+        return;
+      }
+
+      const submitBtn = document.getElementById('submit-btn');
+      const loader = document.getElementById('loader');
+      submitBtn.disabled = true;
+      loader.classList.add('active');
+
+      try {
+        const res = await fetch('/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: query, scope_id: scope })
+        });
+        const data = await res.json();
+        renderResult(data);
+        fetchMetrics();
+      } catch (err) {
+        alert("Error processing query: " + err);
+      } finally {
+        submitBtn.disabled = false;
+        loader.classList.remove('active');
+      }
+    }
+
+    function renderResult(data) {
+      const dec = data.decision_record;
+      const cost = data.cost;
+
+      document.getElementById('result-section').classList.add('active');
+      document.getElementById('answer-text').innerText = data.answer;
+
+      // Update Path Badge
+      const pathBadge = document.getElementById('path-badge');
+      pathBadge.innerText = dec.path_taken;
+      pathBadge.className = 'badge';
+      if (dec.path_taken === 'EXACT_HASH_HIT') pathBadge.classList.add('badge-exact');
+      else if (dec.path_taken === 'SEMANTIC_CACHE_REUSE') pathBadge.classList.add('badge-semantic');
+      else if (dec.path_taken === 'HINT_ZONE_TIER_REUSE') pathBadge.classList.add('badge-hint');
+      else pathBadge.classList.add('badge-nn');
+
+      // Update Tier Badge
+      const tierBadge = document.getElementById('tier-badge');
+      tierBadge.innerText = dec.selected_tier;
+      tierBadge.className = 'tier-badge';
+      if (dec.selected_tier === 'SMALL') tierBadge.classList.add('tier-small');
+      else if (dec.selected_tier === 'MEDIUM') tierBadge.classList.add('tier-medium');
+      else tierBadge.classList.add('tier-large');
+
+      // Update Cost and Latency
+      document.getElementById('actual-cost').innerText = '$' + cost.actual_cost_usd.toFixed(6);
+      document.getElementById('saved-pct').innerText = cost.savings_pct.toFixed(1) + '% saved vs Large ($' + cost.baseline_large_cost_usd.toFixed(6) + ')';
+      document.getElementById('latency-val').innerText = dec.latency_ms.toFixed(1) + ' ms';
+      document.getElementById('cache-status-val').innerText = 'Status: ' + dec.status;
+
+      // Update Trace details
+      document.getElementById('trace-similarity').innerText = dec.similarity.toFixed(4);
+      document.getElementById('trace-skipped').innerText = dec.skipped_feature_layer ? 'Yes (Feature layer & NN bypassed)' : 'No (40-d features extracted & evaluated)';
+      document.getElementById('trace-reason').innerText = dec.reason || 'Optimal path selected.';
+      document.getElementById('trace-baseline').innerText = '$' + cost.baseline_large_cost_usd.toFixed(6);
+
+      // Flow steps visualizer
+      document.querySelectorAll('.step-pill').forEach(el => el.classList.remove('active'));
+      document.getElementById('step-hash').classList.add('active');
+
+      if (dec.path_taken === 'EXACT_HASH_HIT') {
+        document.getElementById('step-exact').classList.add('active');
+      } else if (dec.path_taken === 'SEMANTIC_CACHE_REUSE') {
+        document.getElementById('step-embed').classList.add('active');
+        document.getElementById('step-call').classList.add('active');
+      } else if (dec.path_taken === 'HINT_ZONE_TIER_REUSE') {
+        document.getElementById('step-embed').classList.add('active');
+        document.getElementById('step-tier').classList.add('active');
+        document.getElementById('step-call').classList.add('active');
+        document.getElementById('step-cache').classList.add('active');
+      } else {
+        document.getElementById('step-embed').classList.add('active');
+        document.getElementById('step-tier').classList.add('active');
+        document.getElementById('step-call').classList.add('active');
+        document.getElementById('step-cache').classList.add('active');
+      }
+
+      // Smooth scroll to result
+      document.getElementById('result-section').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Initial load
+    fetchMetrics();
+  </script>
+</body>
+</html>
+
