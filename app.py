@@ -3,10 +3,13 @@ PrismRoute — Interactive Dashboard & Real-Time Query Console.
 
 Features:
 - Live Model Router & Semantic Cache Playback.
+- 3-Tier Multi-Class Routing Policy (Logistic Regression / PyTorch MLP).
+- Confidence thresholding and quality safeguard fallback.
 - Visual breakdown of the 2-layer cache decision flow (Exact Hash -> ANN Cosine -> Safe Reuse Guard).
 - Cost, Latency, and Savings Tracker compared to Large Model baseline.
 - 40-Dimensional Feature Explorer for incoming queries.
-- Benchmark Report Generator on MMLU / GSM8K queries.
+- Active Learning & Feedback Adaptation Loop.
+- Cost-Per-Correct Report Generator on MMLU / GSM8K queries.
 """
 
 import time
@@ -17,6 +20,7 @@ import streamlit as st
 
 from backend.service import MODEL_CATALOG, service
 from backend.feature_extraction import FEATURE_NAMES, FEATURE_GROUPS, featurize
+from backend.routing_policy import RoutingPolicy, DEFAULT_PRICE_SHEET
 
 # ---------------------------------------------------------------------------
 # Streamlit App Layout & Styling
@@ -40,13 +44,6 @@ st.markdown("""
         font-size: 1.05rem;
         color: #64748B;
         margin-bottom: 1.5rem;
-    }
-    .metric-card {
-        background-color: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 8px;
-        padding: 16px;
-        text-align: center;
     }
     .badge-hit {
         background-color: #DEF7EC;
@@ -80,6 +77,14 @@ st.markdown("""
         font-weight: 600;
         font-size: 0.85rem;
     }
+    .badge-fallback {
+        background-color: #FEF08A;
+        color: #854D0E;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,15 +96,31 @@ st.markdown('<div class="sub-header">Case 6: Dynamic 3-Tier Routing (Small/Mediu
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Router Configuration")
+
+    model_choice = st.selectbox(
+        "Routing Model Architecture",
+        ["Logistic Regression (Scikit-Learn)", "Neural Network (PyTorch MLP)"],
+        index=0,
+        help="Choose the underlying classifier used by the Routing Policy."
+    )
+    selected_model_type = "logistic_regression" if "Logistic" in model_choice else "neural_net"
+
     quality_threshold = st.slider(
         "Confidence Quality Threshold",
-        min_value=0.50,
+        min_value=0.40,
         max_value=0.95,
-        value=0.70,
+        value=0.65,
         step=0.05,
         help="If router confidence falls below this threshold, fallback to a larger model to preserve answer accuracy."
     )
     service.quality_threshold = quality_threshold
+
+    if service.policy.model_type != selected_model_type:
+        service.policy = RoutingPolicy(model_type=selected_model_type, confidence_threshold=quality_threshold)
+    else:
+        service.policy.confidence_threshold = quality_threshold
+
+    st.caption(f"Active Model: **{service.policy.router.model_type.upper()}** (Threshold: `{quality_threshold:.2f}`)")
 
     st.markdown("---")
     st.subheader("Model Price Sheet ($/1k tokens)")
@@ -131,10 +152,11 @@ st.markdown("---")
 # ---------------------------------------------------------------------------
 # Main Tabs
 # ---------------------------------------------------------------------------
-tab_query, tab_analytics, tab_features, tab_report = st.tabs([
+tab_query, tab_analytics, tab_features, tab_feedback, tab_report = st.tabs([
     "💬 Live Query Console", 
     "📊 Cost & Latency Analytics", 
     "🧬 40-Dim Feature Explorer",
+    "🔄 Feedback & Adaptation",
     "📑 Cost-Per-Correct Report"
 ])
 
@@ -153,20 +175,27 @@ with tab_query:
             "Define photosynthesis in two simple sentences.",
             "Explain quantum key distribution with state diagrams and security proof.",
             "Write an asynchronous rate-limiter class in Python using Redis tokens.",
+            "Solve the recurrence relation T(n) = 2T(n/2) + O(n log n) using Master Theorem.",
         ]
         selected_sample = st.selectbox("Quick Sample Queries:", ["-- Select or type custom below --"] + sample_queries)
         
         default_val = selected_sample if selected_sample != "-- Select or type custom below --" else "What is 15 percent of 200?"
-        user_query = st.text_area("User Query:", value=default_val, height=120)
+        user_query = st.text_area("User Query:", value=default_val, height=110)
 
         submit_btn = st.button("🚀 Route & Execute Query", type="primary")
 
     if submit_btn and user_query:
-        with st.spinner("Evaluating Cache & Routing Query..."):
+        with st.spinner("Evaluating Cache & Executing Routing Policy..."):
             result = service.process_query(user_query)
+            st.session_state["latest_result"] = result
+            st.session_state["latest_query"] = user_query
+
+    if "latest_result" in st.session_state:
+        result = st.session_state["latest_result"]
+        current_q = st.session_state.get("latest_query", "")
 
         with col_decision:
-            st.subheader("Decision Breakdown")
+            st.subheader("Routing & Cache Decision")
             
             # Status Badge
             status = result["status"]
@@ -180,13 +209,61 @@ with tab_query:
             
             st.markdown(f"**Cache Status:** <span class='{badge_class}'>{status}</span>", unsafe_allow_html=True)
             st.write(f"**Cosine Similarity:** `{result['similarity']:.4f}`")
-            st.write(f"**Selected Model Tier:** `{result['tier_used']}`")
-            st.write(f"**Latency:** `{result['latency_ms']:.2f} ms`")
-            st.write(f"**Actual Query Cost:** `${result['actual_cost_usd']:.6f}` (Saved: `${result['saved_usd']:.6f}`)")
-            st.info(f"**System Logic:** {result['reason']}")
+            
+            # Show routing policy tier selection
+            routing_info = result.get("routing")
+            if routing_info:
+                st.write(f"**Predicted Tier:** `{routing_info['predicted_tier']}` (Confidence: `{routing_info['confidence']:.3f}`)")
+                if routing_info["fallback_triggered"]:
+                    st.markdown(f"**Final Selected Tier:** `{result['tier_used']}` <span class='badge-fallback'>FALLBACK TRIGGERED</span>", unsafe_allow_html=True)
+                    st.caption(f"⚠️ *Fallback Reason:* {routing_info.get('fallback_reason', '')}")
+                else:
+                    st.write(f"**Final Selected Tier:** `{result['tier_used']}` *(Minimum-cost model meeting threshold)*")
+
+                # Probabilities breakdown chart
+                probs = routing_info["probabilities"]
+                prob_df = pd.DataFrame({
+                    "Tier": list(probs.keys()),
+                    "Probability": list(probs.values())
+                })
+                fig_prob = px.bar(
+                    prob_df, 
+                    x="Probability", 
+                    y="Tier", 
+                    orientation="h",
+                    range_x=[0, 1],
+                    color="Tier",
+                    color_discrete_map={"SMALL": "#10B981", "MEDIUM": "#3B82F6", "LARGE": "#8B5CF6"},
+                    height=180
+                )
+                fig_prob.update_layout(margin=dict(l=20, r=20, t=10, b=10))
+                st.plotly_chart(fig_prob, use_container_width=True)
+            else:
+                st.write(f"**Model Tier Used:** `{result['tier_used']}` (Served from Cache)")
+
+            st.write(f"**Latency:** `{result['latency_ms']:.2f} ms` | **Actual Query Cost:** `${result['actual_cost_usd']:.6f}`")
+            st.info(f"**Policy Decision:** {result['reason']}")
 
             st.markdown("#### Model Response")
             st.success(result["response_text"])
+
+            # Feedback submission expander
+            with st.expander("📝 Provide Feedback / Correction (Active Learning)", expanded=False):
+                fb_col1, fb_col2 = st.columns([2, 1])
+                with fb_col1:
+                    corr_tier = st.selectbox(
+                        "Should this query be Small, Medium, or Large?",
+                        ["SMALL", "MEDIUM", "LARGE"],
+                        index=["SMALL", "MEDIUM", "LARGE"].index(result["tier_used"])
+                    )
+                    fb_notes = st.text_input("Feedback notes / justification:", value="Looks correct" if corr_tier == result["tier_used"] else "Difficulty misclassified")
+                with fb_col2:
+                    st.write("")
+                    st.write("")
+                    if st.button("Submit Feedback", key="submit_fb_btn"):
+                        conf = routing_info["confidence"] if routing_info else 1.0
+                        fid = service.record_feedback(current_q, result["tier_used"], corr_tier, conf, fb_notes)
+                        st.success(f"Feedback #{fid} recorded! Will be used in model adaptation.")
 
 # ---------------------------------------------------------------------------
 # TAB 2: Cost & Latency Analytics
@@ -197,7 +274,6 @@ with tab_analytics:
     col_g1, col_g2 = st.columns(2)
     
     with col_g1:
-        # Tier breakdown pie chart
         tier_data = pd.DataFrame(list(metrics["tier_counts"].items()), columns=["Tier", "Count"])
         fig_tier = px.pie(
             tier_data, 
@@ -211,9 +287,8 @@ with tab_analytics:
         st.plotly_chart(fig_tier, use_container_width=True)
 
     with col_g2:
-        # Cost Comparison Bar Chart
         cost_df = pd.DataFrame({
-            "Policy": ["Actual (PrismRoute)", "Baseline (Always Large)"],
+            "Policy": ["PrismRoute Policy", "Baseline (Always Large)"],
             "Cost ($)": [metrics["total_cost"], metrics["baseline_cost"]]
         })
         fig_cost = px.bar(
@@ -244,14 +319,12 @@ with tab_features:
     explore_query = st.text_input("Inspect query features for:", value=user_query if 'user_query' in locals() else "What is 15 percent of 200?")
     feats = featurize(explore_query)
     
-    # Render features by group
     feat_df = pd.DataFrame({
         "Feature Index": range(len(FEATURE_NAMES)),
         "Feature Name": FEATURE_NAMES,
         "Value": feats,
     })
     
-    # Feature group tabs
     g_tabs = st.tabs([g.replace("_", " ").title() for g in FEATURE_GROUPS.keys()])
     for idx, (group_name, group_keys) in enumerate(FEATURE_GROUPS.items()):
         with g_tabs[idx]:
@@ -261,7 +334,41 @@ with tab_features:
             st.dataframe(sub_df, use_container_width=True)
 
 # ---------------------------------------------------------------------------
-# TAB 4: Cost-Per-Correct Report
+# TAB 4: Feedback & Active Learning (Bonus 1)
+# ---------------------------------------------------------------------------
+with tab_feedback:
+    st.subheader("🔄 Feedback Loop & Active Learning")
+    st.markdown("""
+    As part of the **Bonus Requirements**, this module records reviewer feedback and dynamically updates
+    the routing model weights when user corrections arrive.
+    """)
+
+    fb_summary = service.get_feedback_summary()
+    f1, f2, f3 = st.columns(3)
+    f1.metric("Total Feedback Entries", fb_summary["total_feedback"])
+    f2.metric("Router Agreement Rate", f"{fb_summary['accuracy']:.1f}%")
+    f3.metric("User Corrections", fb_summary["corrections"])
+
+    st.markdown("---")
+    st.subheader("Online Model Adaptation")
+    st.write("Click below to adapt/fine-tune the active routing policy with newly submitted corrections:")
+    
+    if st.button("🔄 Retrain / Fine-Tune Router Weights from Feedback"):
+        with st.spinner("Adapting classifier weights..."):
+            adapt_res = service.adapt_from_feedback()
+            if adapt_res["success"]:
+                st.success(adapt_res["message"])
+            else:
+                st.warning(adapt_res["message"])
+
+    st.markdown("### Feedback History")
+    if fb_summary["logs"]:
+        st.dataframe(pd.DataFrame(fb_summary["logs"]), use_container_width=True)
+    else:
+        st.info("No feedback entries recorded yet. Submit queries in Tab 1 and provide feedback.")
+
+# ---------------------------------------------------------------------------
+# TAB 5: Cost-Per-Correct Report
 # ---------------------------------------------------------------------------
 with tab_report:
     st.subheader("Comparative Benchmark Report: PrismRoute vs Always-Large")
@@ -275,7 +382,6 @@ with tab_report:
     large_total_cost = metrics["baseline_cost"]
     route_total_cost = metrics["total_cost"]
     
-    # Simulated quality benchmark
     assumed_large_acc = 0.96
     assumed_router_acc = 0.93  # High accuracy due to fallback to Large on uncertainty
 
@@ -326,4 +432,3 @@ with tab_report:
         ]
     }
     st.table(pd.DataFrame(report_data))
-

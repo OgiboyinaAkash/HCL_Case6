@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from backend.feature_extraction import featurize, FEATURE_NAMES
+from backend.routing_policy import RoutingPolicy, DEFAULT_PRICE_SHEET
 
 # Model pricing catalog ($ per 1k tokens)
 MODEL_CATALOG = {
@@ -128,66 +129,33 @@ def safe_reuse_guard(query_meta: Dict[str, Any], cached_meta: Dict[str, Any]) ->
 
 
 class PrismRouteService:
-    def __init__(self, quality_threshold: float = 0.70):
+    def __init__(self, quality_threshold: float = 0.65, model_type: str = "logistic_regression"):
         self.quality_threshold = quality_threshold
+        self.policy = RoutingPolicy(model_type=model_type, confidence_threshold=quality_threshold)
 
-    def route_query_tier(self, query: str, features: np.ndarray) -> Dict[str, Any]:
+    def route_query_tier(self, query_or_features: Union[str, np.ndarray]) -> Dict[str, Any]:
         """
         Routing policy:
-        Decides model tier (SMALL, MEDIUM, LARGE) based on estimated difficulty,
-        reasoning score, math & code requirements from the 40-dim feature vector.
+        Evaluates query complexity using trained model (Logistic Regression / PyTorch Neural Net)
+        over 40-dimensional mathematical & lexical features, enforcing confidence thresholding.
         """
-        # Feature vector mappings from backend.feature_extraction:
-        # [6]: number_count, [11]: operator_count, [24]: is_reasoning, [25]: is_coding
-        # [37]: reasoning_score, [39]: estimated_difficulty
-        difficulty = float(features[39])
-        reasoning = float(features[37])
-        is_coding = bool(features[25])
-        is_reasoning = bool(features[24])
+        return self.policy.route(query_or_features, override_threshold=self.quality_threshold)
 
-        # Base scoring
-        score_large = difficulty * 0.6 + reasoning * 0.4
-        if is_coding or difficulty > 0.65:
-            score_large += 0.35
+    def record_feedback(
+        self,
+        query: str,
+        predicted_tier: str,
+        corrected_tier: str,
+        confidence: float,
+        notes: str = ""
+    ) -> int:
+        return self.policy.record_feedback(query, predicted_tier, corrected_tier, confidence, notes)
 
-        if score_large > 0.65:
-            p_large = min(0.95, score_large)
-            p_medium = (1.0 - p_large) * 0.7
-            p_small = max(0.01, 1.0 - p_large - p_medium)
-            selected = "LARGE"
-        elif score_large > 0.35 or difficulty > 0.30:
-            p_medium = 0.75
-            p_large = 0.15
-            p_small = 0.10
-            selected = "MEDIUM"
-        else:
-            p_small = 0.85
-            p_medium = 0.12
-            p_large = 0.03
-            selected = "SMALL"
+    def get_feedback_summary(self) -> Dict[str, Any]:
+        return self.policy.get_feedback_summary()
 
-        # Uncertainty fallback rule: if confidence is below threshold, fallback to higher tier
-        confidence = max(p_small, p_medium, p_large)
-        fallback = False
-        if confidence < self.quality_threshold:
-            fallback = True
-            if selected == "SMALL":
-                selected = "MEDIUM"
-            elif selected == "MEDIUM":
-                selected = "LARGE"
-
-        return {
-            "selected_tier": selected,
-            "confidence": confidence,
-            "fallback_triggered": fallback,
-            "probabilities": {
-                "SMALL": float(p_small),
-                "MEDIUM": float(p_medium),
-                "LARGE": float(p_large),
-            },
-            "difficulty": difficulty,
-            "reasoning": reasoning,
-        }
+    def adapt_from_feedback(self) -> Dict[str, Any]:
+        return self.policy.adapt_from_feedback()
 
     def process_query(self, query: str) -> Dict[str, Any]:
         t0 = time.perf_counter()
@@ -290,10 +258,18 @@ class PrismRouteService:
             cache_status = "MISS"
             status_reason = f"Similarity ({max_sim:.3f}) < 0.80. Cache miss, passing to router model."
 
-        # Step 3 & 4: Route query and call minimum cost model
-        routing = self.route_query_tier(query, q_features)
+        # Step 3 & 4: Route query using ML Routing Policy (with confidence thresholding)
+        routing = self.route_query_tier(q_features)
         tier = routing["selected_tier"]
         simulated_response = self._generate_response(query, tier)
+
+        # Step 4b: Response Uncertainty Fallback Check (Bonus 2)
+        is_uncertain, unc_reason = self.policy.evaluate_response_uncertainty(simulated_response, query)
+        if is_uncertain and tier != "LARGE":
+            tier = "LARGE"
+            routing["fallback_triggered"] = True
+            routing["fallback_reason"] = f"Response uncertainty detected: {unc_reason}. Fallback to LARGE."
+            simulated_response = self._generate_response(query, "LARGE")
 
         input_toks = len(query.split()) * 2
         output_toks = len(simulated_response.split()) * 2

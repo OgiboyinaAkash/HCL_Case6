@@ -2,3 +2,11 @@ psycopg2-binary
 pgvector
 sentence-transformers
 numpy
+torch
+scikit-learn
+pandas
+joblib
+streamlit
+plotly
+pyarrow
+datasets
