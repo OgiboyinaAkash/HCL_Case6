@@ -16,20 +16,27 @@
 
 ---
 
-## Quickstart (Module 1)
+## Quickstart (Module 1 & Frontend Dashboard)
 
 1. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Start the Database:**
+2. **Start the Frontend Dashboard:**
+   ```bash
+   streamlit run app.py
+   ```
+   *Opens the interactive UI at `http://localhost:8501`.*
+
+3. **Start the PostgreSQL Database (Optional for container setup):**
    ```bash
    docker compose up -d
    ```
    *(Or connect to a local PostgreSQL instance with pgvector extension enabled)*
 
-3. **Run the Verification Suite:**
+4. **Run the Verification Suite:**
    ```bash
+   python -m unittest tests/test_feature_extraction.py
    python test_my_module.py
    ```

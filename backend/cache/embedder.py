@@ -6,8 +6,13 @@ sentence-transformers.  The model is loaded once and reused for
 the lifetime of the process.
 """
 
+import os
 import re
 import numpy as np
+
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 from sentence_transformers import SentenceTransformer
 
 
@@ -24,7 +29,13 @@ class LocalEmbedder:
 
     def __init__(self):
         if self._model is None:
-            self.__class__._model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+            try:
+                self.__class__._model = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception:
+                try:
+                    self.__class__._model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+                except Exception:
+                    self.__class__._model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
     def encode(self, text: str) -> np.ndarray:
         """Return a normalised float32 embedding of shape (384,)."""
