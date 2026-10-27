@@ -124,16 +124,24 @@ All downstream modules (Module 2 router, Module 3 guardrails, Module 4 dashboard
   $$\text{similarity} = 1 - (\text{embedding} \Leftrightarrow \text{query\_vec})$$
 - **Returns**: List of dicts ordered by `similarity DESC`.
 
-### 4. `check_semantic_cache(query: str, query_metadata: Dict[str, Any], safe_reuse_validator: Optional[Callable] = None, min_similarity: float = 0.92) -> Dict[str, Any]`
-Main entry-point for routing. Returns a dictionary with guaranteed keys:
-- `status`: `"HIT_EXACT"`, `"HIT_SEMANTIC"`, `"REJECTED_UNSAFE"`, or `"MISS"`
+### 4. `check_semantic_cache(query: str, query_metadata: Dict[str, Any], safe_reuse_validator: Optional[Callable] = None, min_similarity: float = 0.80, top_k: int = 5) -> Dict[str, Any]`
+Main entry-point for caching. Implements exact multi-threshold logic:
+1. **Exact Match**: Checks normalized SHA-256 hash. If found, returns immediately with `status: "HIT_EXACT"`, `similarity: 1.0`, and cached `response_text`.
+2. **Embed & Semantic Match**: If exact hash misses, encodes query via `BAAI/bge-small-en-v1.5` and computes cosine similarity against cached embeddings:
+   - **Similarity > 0.90**: Returns `status: "HIT_SEMANTIC"`, `route_to: "CACHE"`, and cached `response_text` (after validation through the Safe-Reuse Guardrail).
+   - **0.80 <= Similarity <= 0.90**: Returns `status: "ROUTE_TO_ROUTER"`, `route_to: "ROUTER"`, and forwarding details for the router model.
+   - **Similarity < 0.80**: Declared as `status: "MISS"`, `route_to: "ROUTER"` (Cache Miss). The downstream caller invokes the model, and then stores the result in cache via `store_in_cache(...)`.
+
+Returns a dictionary with guaranteed keys:
+- `status`: `"HIT_EXACT"`, `"HIT_SEMANTIC"`, `"ROUTE_TO_ROUTER"`, `"REJECTED_UNSAFE"`, or `"MISS"`
+- `route_to`: `"CACHE"` or `"ROUTER"`
 - `response_text`: `Optional[str]` (contains cached response if HIT)
 - `tier_used`: `Optional[str]` (e.g. `"SMALL"`, `"MEDIUM"`, `"LARGE"`)
-- `similarity`: `float` (1.0 for HIT_EXACT, 0.0 for MISS, score for SEMANTIC/REJECTED)
+- `similarity`: `float` (1.0 for HIT_EXACT, 0.0 for MISS, max similarity score for candidates)
 - `matched_query`: `Optional[str]` (query text from matching cache row)
 - `latency_ms`: `float` (lookup duration in milliseconds)
-- `reason`: `str` (explanation of why hit, missed, or rejected)
-- `embedding`: `Optional[np.ndarray]` (`None` on HIT_EXACT to avoid redundant embedding compute; contains `(384,)` float32 array on MISS, REJECTED_UNSAFE, and HIT_SEMANTIC so caller does not need to re-encode).
+- `reason`: `str` (explanation of why hit, routed, missed, or rejected)
+- `embedding`: `Optional[np.ndarray]` (`None` on HIT_EXACT to avoid redundant compute; contains `(384,)` float32 array on MISS, ROUTE_TO_ROUTER, REJECTED_UNSAFE, and HIT_SEMANTIC so caller does not need to re-encode).
 
 ### 5. `store_in_cache(query: str, query_vec: Optional[np.ndarray], metadata: Dict[str, Any], response_text: str, tier_used: str) -> None`
 - **Behavior**: Inserts a new response into `semantic_cache`. Automatically computes `query_vec` if `None` is provided. Uses `ON CONFLICT (query_hash) DO NOTHING`.

@@ -108,7 +108,8 @@ def check_semantic_cache(
     safe_reuse_validator: Optional[
         Callable[[Dict[str, Any], Dict[str, Any]], tuple[bool, str]]
     ] = None,
-    min_similarity: float = 0.92,
+    min_similarity: float = 0.80,
+    top_k: int = 5,
 ) -> Dict[str, Any]:
     """Two-layer cache lookup with optional Safe-Reuse Guard.
 
@@ -130,13 +131,18 @@ def check_semantic_cache(
             "latency_ms": (time.perf_counter() - t0) * 1000,
             "reason": "Exact query hash matched.",
             "embedding": None,
+            "route_to": "CACHE",
         }
 
     # --- Step 2: compute embedding ----------------------------------------
     query_vec = embedder.encode(query)
 
     # --- Step 3: semantic candidates --------------------------------------
-    candidates = search_semantic_candidates(query_vec, min_similarity=min_similarity)
+    # Query candidates with cosine similarity >= 0.80 to apply routing threshold rules:
+    # 1. Similarity > 0.90: Semantic cache hit (return cached response if safe)
+    # 2. 0.80 <= Similarity <= 0.90: Route to router model
+    # 3. Similarity < 0.80: Cache miss -> passes to feature extraction & router model
+    candidates = search_semantic_candidates(query_vec, min_similarity=0.80, top_k=top_k)
 
     if not candidates:
         return {
@@ -145,14 +151,36 @@ def check_semantic_cache(
             "tier_used": None,
             "similarity": 0.0,
             "latency_ms": (time.perf_counter() - t0) * 1000,
-            "reason": "No semantic match above threshold.",
+            "reason": "Cosine similarity < 0.80. Cache miss, query should be processed and cached at the end.",
             "embedding": query_vec,
+            "route_to": "ROUTER",
         }
 
-    # --- Step 4: Safe-Reuse Guard -----------------------------------------
+    top_candidate = candidates[0]
+    max_sim = float(top_candidate["similarity"])
+
+    # If cosine similarity score is between 0.80 and 0.90 -> return to router model
+    if max_sim <= 0.90:
+        return {
+            "status": "ROUTE_TO_ROUTER",
+            "response_text": None,
+            "tier_used": None,
+            "similarity": max_sim,
+            "matched_query": top_candidate["query_text"],
+            "latency_ms": (time.perf_counter() - t0) * 1000,
+            "reason": f"Cosine similarity score ({max_sim:.4f}) is between 0.80 and 0.90. Returning to router model.",
+            "embedding": query_vec,
+            "route_to": "ROUTER",
+        }
+
+    # --- Step 4: Safe-Reuse Guard for candidates with similarity > 0.90 ---
     rejection_reasons: List[str] = []
 
     for cand in candidates:
+        cand_sim = float(cand["similarity"])
+        if cand_sim <= 0.90:
+            continue
+
         cand_meta = cand["metadata"]
 
         if safe_reuse_validator is not None:
@@ -170,16 +198,17 @@ def check_semantic_cache(
                 "status": "HIT_SEMANTIC",
                 "response_text": cand["response_text"],
                 "tier_used": cand["tier_used"],
-                "similarity": float(cand["similarity"]),
+                "similarity": cand_sim,
                 "matched_query": cand["query_text"],
                 "latency_ms": (time.perf_counter() - t0) * 1000,
                 "reason": reason,
                 "embedding": query_vec,
+                "route_to": "CACHE",
             }
 
         rejection_reasons.append(reason)
 
-    # All candidates above threshold failed validation
+    # All candidates above 0.90 failed validation
     top = candidates[0]
     return {
         "status": "REJECTED_UNSAFE",
@@ -190,6 +219,7 @@ def check_semantic_cache(
         "latency_ms": (time.perf_counter() - t0) * 1000,
         "reason": " | ".join(rejection_reasons),
         "embedding": query_vec,
+        "route_to": "ROUTER",
     }
 
 
